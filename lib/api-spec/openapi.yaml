@@ -3,20 +3,36 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Developer Portfolio & Activity Dashboard API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: profile
+    description: User profile management
+  - name: platforms
+    description: Connected platform OAuth management
+  - name: github
+    description: GitHub data (repos, issues, activity)
+  - name: gitlab
+    description: GitLab data (projects, merge requests)
+  - name: bitbucket
+    description: Bitbucket data (repos, pull requests)
+  - name: slack
+    description: Slack workspace data
+  - name: activity
+    description: Unified activity feed
+  - name: projects
+    description: Portfolio projects CRUD
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +40,598 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ─── Profile ───────────────────────────────────────────────
+  /profile:
+    get:
+      operationId: getProfile
+      tags: [profile]
+      summary: Get current user profile
+      responses:
+        "200":
+          description: Profile data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "404":
+          description: Profile not found
+    put:
+      operationId: updateProfile
+      tags: [profile]
+      summary: Update user profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileBody"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+
+  # ─── Connected Platforms ────────────────────────────────────
+  /platforms:
+    get:
+      operationId: listPlatforms
+      tags: [platforms]
+      summary: List all connected platforms and their status
+      responses:
+        "200":
+          description: List of connected platforms
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ConnectedPlatform"
+
+  /platforms/{platform}:
+    get:
+      operationId: getPlatform
+      tags: [platforms]
+      summary: Get specific platform connection status
+      parameters:
+        - name: platform
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [github, gitlab, bitbucket, slack, zoho]
+      responses:
+        "200":
+          description: Platform connection details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectedPlatform"
+    delete:
+      operationId: disconnectPlatform
+      tags: [platforms]
+      summary: Disconnect a platform
+      parameters:
+        - name: platform
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [github, gitlab, bitbucket, slack, zoho]
+      responses:
+        "204":
+          description: Disconnected successfully
+
+  /platforms/{platform}/connect:
+    post:
+      operationId: connectPlatform
+      tags: [platforms]
+      summary: Save OAuth token for a platform
+      parameters:
+        - name: platform
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [github, gitlab, bitbucket, slack, zoho]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectPlatformBody"
+      responses:
+        "200":
+          description: Platform connected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectedPlatform"
+
+  /platforms/{platform}/sync:
+    post:
+      operationId: syncPlatform
+      tags: [platforms]
+      summary: Trigger a manual sync for a platform
+      parameters:
+        - name: platform
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [github, gitlab, bitbucket, slack, zoho]
+      responses:
+        "200":
+          description: Sync result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncResult"
+
+  # ─── Dashboard summary ──────────────────────────────────────
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [activity]
+      summary: Get dashboard overview counts and stats
+      responses:
+        "200":
+          description: Summary stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+
+  # ─── GitHub ─────────────────────────────────────────────────
+  /github/repos:
+    get:
+      operationId: listGithubRepos
+      tags: [github]
+      summary: List GitHub repositories
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [all, owner, member]
+            default: all
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [updated, pushed, created, full_name]
+            default: updated
+      responses:
+        "200":
+          description: List of repositories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GithubRepo"
+
+  /github/repos/{owner}/{repo}/issues:
+    get:
+      operationId: listGithubIssues
+      tags: [github]
+      summary: List issues for a specific repo
+      parameters:
+        - name: owner
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: repo
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [open, closed, all]
+            default: open
+        - name: labels
+          in: query
+          schema:
+            type: string
+        - name: assignee
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of issues
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GithubIssue"
+
+  /github/issues:
+    get:
+      operationId: listAllGithubIssues
+      tags: [github]
+      summary: List all GitHub issues assigned to or created by user (across all repos)
+      parameters:
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [open, closed, all]
+            default: open
+        - name: filter
+          in: query
+          schema:
+            type: string
+            enum: [assigned, created, mentioned, subscribed, all]
+            default: assigned
+      responses:
+        "200":
+          description: Issues list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GithubIssue"
+
+  /github/activity:
+    get:
+      operationId: getGithubActivity
+      tags: [github]
+      summary: Get recent GitHub events/activity
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 30
+      responses:
+        "200":
+          description: GitHub activity events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityItem"
+
+  /github/contributions:
+    get:
+      operationId: getGithubContributions
+      tags: [github]
+      summary: Get GitHub contribution heatmap data
+      responses:
+        "200":
+          description: Contribution data by day
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContributionData"
+
+  # ─── GitLab ─────────────────────────────────────────────────
+  /gitlab/projects:
+    get:
+      operationId: listGitlabProjects
+      tags: [gitlab]
+      summary: List GitLab projects
+      parameters:
+        - name: membership
+          in: query
+          schema:
+            type: boolean
+            default: true
+      responses:
+        "200":
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GitlabProject"
+
+  /gitlab/merge-requests:
+    get:
+      operationId: listGitlabMergeRequests
+      tags: [gitlab]
+      summary: List GitLab merge requests
+      parameters:
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [opened, closed, merged, all]
+            default: opened
+        - name: scope
+          in: query
+          schema:
+            type: string
+            enum: [created_by_me, assigned_to_me, all]
+            default: assigned_to_me
+      responses:
+        "200":
+          description: Merge requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GitlabMergeRequest"
+
+  /gitlab/activity:
+    get:
+      operationId: getGitlabActivity
+      tags: [gitlab]
+      summary: Get recent GitLab events
+      responses:
+        "200":
+          description: GitLab activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityItem"
+
+  # ─── Bitbucket ───────────────────────────────────────────────
+  /bitbucket/repos:
+    get:
+      operationId: listBitbucketRepos
+      tags: [bitbucket]
+      summary: List Bitbucket repositories
+      responses:
+        "200":
+          description: List of repositories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BitbucketRepo"
+
+  /bitbucket/pull-requests:
+    get:
+      operationId: listBitbucketPullRequests
+      tags: [bitbucket]
+      summary: List Bitbucket pull requests
+      parameters:
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [OPEN, MERGED, DECLINED, SUPERSEDED]
+            default: OPEN
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [author, reviewer, participant]
+            default: author
+      responses:
+        "200":
+          description: Pull requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BitbucketPullRequest"
+
+  /bitbucket/activity:
+    get:
+      operationId: getBitbucketActivity
+      tags: [bitbucket]
+      summary: Get recent Bitbucket activity
+      responses:
+        "200":
+          description: Bitbucket activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityItem"
+
+  # ─── Slack ───────────────────────────────────────────────────
+  /slack/workspaces:
+    get:
+      operationId: listSlackWorkspaces
+      tags: [slack]
+      summary: List connected Slack workspaces
+      responses:
+        "200":
+          description: Workspaces
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SlackWorkspace"
+
+  /slack/channels:
+    get:
+      operationId: listSlackChannels
+      tags: [slack]
+      summary: List Slack channels
+      responses:
+        "200":
+          description: Channels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SlackChannel"
+
+  /slack/activity:
+    get:
+      operationId: getSlackActivity
+      tags: [slack]
+      summary: Get recent Slack activity (messages/mentions)
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Slack activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityItem"
+
+  # ─── Activity Feed ───────────────────────────────────────────
+  /activity:
+    get:
+      operationId: listActivity
+      tags: [activity]
+      summary: List unified activity feed across all platforms
+      parameters:
+        - name: platform
+          in: query
+          schema:
+            type: string
+            enum: [github, gitlab, bitbucket, slack, all]
+            default: all
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Activity items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityItem"
+
+  /activity/recent:
+    get:
+      operationId: getRecentActivity
+      tags: [activity]
+      summary: Get last 5 public activity items (for public portfolio)
+      responses:
+        "200":
+          description: Recent activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityItem"
+
+  # ─── Portfolio Projects ─────────────────────────────────────
+  /projects:
+    get:
+      operationId: listProjects
+      tags: [projects]
+      summary: List all portfolio projects
+      parameters:
+        - name: featured
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Projects list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+    post:
+      operationId: createProject
+      tags: [projects]
+      summary: Create a new portfolio project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProjectBody"
+      responses:
+        "201":
+          description: Created project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+
+  /projects/{id}:
+    get:
+      operationId: getProject
+      tags: [projects]
+      summary: Get a single project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+    put:
+      operationId: updateProject
+      tags: [projects]
+      summary: Update a project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProjectBody"
+      responses:
+        "200":
+          description: Updated project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+    delete:
+      operationId: deleteProject
+      tags: [projects]
+      summary: Delete a project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
 components:
   schemas:
     HealthStatus:
@@ -31,6 +639,536 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
+    Profile:
+      type: object
+      properties:
+        id:
+          type: string
+        fullName:
+          type: string
+        username:
+          type: string
+        title:
+          type: string
+        bio:
+          type: string
+        avatarUrl:
+          type: string
+        location:
+          type: string
+        currentCompany:
+          type: string
+        currentRole:
+          type: string
+        workStatus:
+          type: string
+          enum: [employed, freelance, open]
+        skills:
+          type: array
+          items:
+            type: string
+        email:
+          type: string
+        websiteUrl:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+      required: [id, fullName, username]
+
+    UpdateProfileBody:
+      type: object
+      properties:
+        fullName:
+          type: string
+        title:
+          type: string
+        bio:
+          type: string
+        avatarUrl:
+          type: string
+        location:
+          type: string
+        currentCompany:
+          type: string
+        currentRole:
+          type: string
+        workStatus:
+          type: string
+          enum: [employed, freelance, open]
+        skills:
+          type: array
+          items:
+            type: string
+        email:
+          type: string
+        websiteUrl:
+          type: string
+
+    ConnectedPlatform:
+      type: object
+      properties:
+        platform:
+          type: string
+          enum: [github, gitlab, bitbucket, slack, zoho]
+        isConnected:
+          type: boolean
+        username:
+          type: string
+        avatarUrl:
+          type: string
+        displayName:
+          type: string
+        lastSyncedAt:
+          type: string
+          format: date-time
+        connectedAt:
+          type: string
+          format: date-time
+        activityCount:
+          type: integer
+        tokenExpiresAt:
+          type: string
+          format: date-time
+        scopes:
+          type: array
+          items:
+            type: string
+      required: [platform, isConnected]
+
+    ConnectPlatformBody:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        username:
+          type: string
+        displayName:
+          type: string
+        avatarUrl:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        tokenExpiresAt:
+          type: string
+          format: date-time
+      required: [accessToken]
+
+    SyncResult:
+      type: object
+      properties:
+        platform:
+          type: string
+        itemsSynced:
+          type: integer
+        syncedAt:
+          type: string
+          format: date-time
+        error:
+          type: string
+      required: [platform, itemsSynced, syncedAt]
+
+    DashboardSummary:
+      type: object
+      properties:
+        totalRepos:
+          type: integer
+        openIssues:
+          type: integer
+        openPullRequests:
+          type: integer
+        totalProjects:
+          type: integer
+        connectedPlatforms:
+          type: integer
+        lastActivityAt:
+          type: string
+          format: date-time
+        activityThisWeek:
+          type: integer
+        contributionStreak:
+          type: integer
+      required: [totalRepos, openIssues, openPullRequests, totalProjects, connectedPlatforms, activityThisWeek]
+
+    GithubRepo:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        fullName:
+          type: string
+        description:
+          type: string
+        url:
+          type: string
+        private:
+          type: boolean
+        stars:
+          type: integer
+        forks:
+          type: integer
+        language:
+          type: string
+        openIssuesCount:
+          type: integer
+        pushedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        topics:
+          type: array
+          items:
+            type: string
+      required: [id, name, fullName, url]
+
+    GithubIssue:
+      type: object
+      properties:
+        id:
+          type: integer
+        number:
+          type: integer
+        title:
+          type: string
+        body:
+          type: string
+        state:
+          type: string
+          enum: [open, closed]
+        url:
+          type: string
+        repoName:
+          type: string
+        repoFullName:
+          type: string
+        labels:
+          type: array
+          items:
+            $ref: "#/components/schemas/GithubLabel"
+        assignees:
+          type: array
+          items:
+            type: string
+        author:
+          type: string
+        authorAvatarUrl:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: string
+          format: date-time
+        commentsCount:
+          type: integer
+        isPullRequest:
+          type: boolean
+      required: [id, number, title, state, url, repoFullName]
+
+    GithubLabel:
+      type: object
+      properties:
+        name:
+          type: string
+        color:
+          type: string
+        description:
+          type: string
+      required: [name, color]
+
+    ContributionData:
+      type: object
+      properties:
+        username:
+          type: string
+        totalContributions:
+          type: integer
+        weeks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContributionWeek"
+      required: [username, totalContributions, weeks]
+
+    ContributionWeek:
+      type: object
+      properties:
+        days:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContributionDay"
+      required: [days]
+
+    ContributionDay:
+      type: object
+      properties:
+        date:
+          type: string
+        count:
+          type: integer
+        level:
+          type: integer
+          minimum: 0
+          maximum: 4
+      required: [date, count, level]
+
+    GitlabProject:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        nameWithNamespace:
+          type: string
+        description:
+          type: string
+        webUrl:
+          type: string
+        stars:
+          type: integer
+        forks:
+          type: integer
+        openIssuesCount:
+          type: integer
+        visibility:
+          type: string
+        language:
+          type: string
+        lastActivityAt:
+          type: string
+          format: date-time
+      required: [id, name, webUrl]
+
+    GitlabMergeRequest:
+      type: object
+      properties:
+        id:
+          type: integer
+        iid:
+          type: integer
+        title:
+          type: string
+        description:
+          type: string
+        state:
+          type: string
+        webUrl:
+          type: string
+        projectName:
+          type: string
+        author:
+          type: string
+        assignees:
+          type: array
+          items:
+            type: string
+        labels:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        sourceBranch:
+          type: string
+        targetBranch:
+          type: string
+      required: [id, iid, title, state, webUrl]
+
+    BitbucketRepo:
+      type: object
+      properties:
+        uuid:
+          type: string
+        name:
+          type: string
+        fullName:
+          type: string
+        description:
+          type: string
+        webUrl:
+          type: string
+        isPrivate:
+          type: boolean
+        language:
+          type: string
+        size:
+          type: integer
+        updatedOn:
+          type: string
+          format: date-time
+        mainBranch:
+          type: string
+      required: [uuid, name, fullName, webUrl]
+
+    BitbucketPullRequest:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        description:
+          type: string
+        state:
+          type: string
+        webUrl:
+          type: string
+        repoFullName:
+          type: string
+        author:
+          type: string
+        reviewers:
+          type: array
+          items:
+            type: string
+        sourceBranch:
+          type: string
+        destinationBranch:
+          type: string
+        createdOn:
+          type: string
+          format: date-time
+        updatedOn:
+          type: string
+          format: date-time
+      required: [id, title, state, webUrl, repoFullName]
+
+    SlackWorkspace:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        domain:
+          type: string
+        iconUrl:
+          type: string
+        memberCount:
+          type: integer
+      required: [id, name]
+
+    SlackChannel:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        topic:
+          type: string
+        memberCount:
+          type: integer
+        isPrivate:
+          type: boolean
+        isMember:
+          type: boolean
+      required: [id, name]
+
+    ActivityItem:
+      type: object
+      properties:
+        id:
+          type: string
+        platform:
+          type: string
+          enum: [github, gitlab, bitbucket, slack, zoho]
+        type:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        url:
+          type: string
+        repoName:
+          type: string
+        repoUrl:
+          type: string
+        activityAt:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+      required: [id, platform, type, title, activityAt]
+
+    Project:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        techStack:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [live, in_progress, open_source, archived]
+        githubRepo:
+          type: string
+        demoUrl:
+          type: string
+        coverImage:
+          type: string
+        isFeatured:
+          type: boolean
+        sortOrder:
+          type: integer
+        stars:
+          type: integer
+        forks:
+          type: integer
+        language:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, name, status]
+
+    CreateProjectBody:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        techStack:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [live, in_progress, open_source, archived]
+        githubRepo:
+          type: string
+        demoUrl:
+          type: string
+        coverImage:
+          type: string
+        isFeatured:
+          type: boolean
+        sortOrder:
+          type: integer
+      required: [name, status]
