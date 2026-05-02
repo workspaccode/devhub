@@ -1,0 +1,390 @@
+تمام، دلوقتي فاهم المطلوب بالظبط — مش مجرد لينكات، بل **OAuth real authentication** عشان تجيب بيانات حساباتك الحقيقية. خليني أوضحلك الصورة الكاملة قبل البرومبت.
+
+***
+
+## 📌 الحقيقة عن كل منصة (مهم جداً تعرفها)
+
+| المنصة | إمكانية جلب بياناتك | القيود |
+|---|---|---|
+| **GitHub** | ✅ ممتاز — API مجاني | Repos, commits, stars, activity heatmap |
+| **LinkedIn** | ⚠️ محدود | جلب البوستات يحتاج app review من LinkedIn + موافقة |
+| **X (Twitter)** | ⚠️ مدفوع | Free tier = قراءة فقط، 500 tweets/month  [docs.x](https://docs.x.com/x-api/account-activity/introduction) |
+| **Slack** | ✅ ممكن | للـ workspace اللي أنت فيه بس |
+| **Supabase** | ✅ يدعم OAuth لكل دول | يخزن الـ provider tokens  [supabase](https://supabase.com/docs/guides/auth/social-login) |
+
+***
+
+## 🏗️ هيكل المشروع
+
+```
+Vue 3 + Vite + Supabase
+├── Authentication layer (Supabase OAuth per platform)
+├── Edge Functions (Supabase) → تستدعي APIs المنصات بالـ tokens
+├── Database (Supabase) → تخزين cached activity + config
+└── Frontend (Vue 3 + Pinia) → Dashboard عرض البيانات
+```
+
+***
+
+## 🎯 البرومبت الكامل
+
+```
+Build me a full-stack personal portfolio + activity dashboard using Vue 3 (Vite + Composition API + Pinia) 
+and Supabase as the backend. This is NOT a simple links page — it uses OAuth authentication to connect 
+to real platform accounts and fetch live activity data.
+
+---
+
+## 🏗️ PROJECT ARCHITECTURE
+
+### Tech Stack
+- Frontend: Vue 3 + Vite + Pinia + Vue Router 4 + TypeScript
+- Backend-as-a-Service: Supabase (Auth, Database, Edge Functions, Realtime)
+- Styling: Tailwind CSS v4
+- Icons: Lucide Vue + Simple Icons CDN
+- HTTP: native fetch + composables
+
+### Supabase Services Used
+- supabase.auth → OAuth login per platform (store provider_token + provider_refresh_token)
+- supabase.from() → store cached activity data per platform
+- Supabase Edge Functions → server-side API calls to GitHub/LinkedIn/X using stored tokens
+- Supabase Realtime → live update the dashboard when new activity is fetched
+
+---
+
+## 🗄️ DATABASE SCHEMA (Supabase SQL)
+
+```sql
+-- Profiles table
+create table profiles (
+  id uuid references auth.users primary key,
+  full_name text,
+  username text unique,
+  title text,
+  bio text,
+  avatar_url text,
+  location text,
+  current_company text,
+  current_role text,
+  work_status text default 'employed', -- 'employed' | 'freelance' | 'open'
+  updated_at timestamptz default now()
+);
+
+-- Connected platforms table (one row per connected account)
+create table connected_platforms (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references profiles(id),
+  platform text not null, -- 'github' | 'linkedin' | 'twitter' | 'slack'
+  platform_user_id text,
+  platform_username text,
+  access_token text, -- encrypted via Supabase Vault
+  refresh_token text,
+  token_expires_at timestamptz,
+  scopes text[], -- what permissions were granted
+  is_active boolean default true,
+  connected_at timestamptz default now(),
+  last_synced_at timestamptz,
+  unique(user_id, platform)
+);
+
+-- Activity feed table (cached data from all platforms)
+create table activity_feed (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references profiles(id),
+  platform text not null,
+  activity_type text, -- 'commit' | 'repo' | 'post' | 'tweet' | 'message'
+  title text,
+  description text,
+  url text,
+  media_url text,
+  metadata jsonb, -- platform-specific extra data
+  activity_at timestamptz,
+  synced_at timestamptz default now()
+);
+
+-- Projects table
+create table projects (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references profiles(id),
+  name text not null,
+  description text,
+  tech_stack text[],
+  status text default 'in_progress', -- 'live' | 'in_progress' | 'open_source' | 'archived'
+  github_repo text, -- e.g. "username/repo-name" for GitHub API linking
+  demo_url text,
+  cover_image text,
+  is_featured boolean default false,
+  sort_order int default 0,
+  created_at timestamptz default now()
+);
+
+-- Enable RLS
+alter table profiles enable row level security;
+alter table connected_platforms enable row level security;
+alter table activity_feed enable row level security;
+alter table projects enable row level security;
+
+-- RLS Policies (owner only)
+create policy "Users can manage own profile" on profiles for all using (auth.uid() = id);
+create policy "Users can manage own platforms" on connected_platforms for all using (auth.uid() = user_id);
+create policy "Users can manage own activity" on activity_feed for all using (auth.uid() = user_id);
+create policy "Users can manage own projects" on projects for all using (auth.uid() = user_id);
+-- Public read for portfolio display
+create policy "Public can view projects" on projects for select using (true);
+create policy "Public can view profiles" on profiles for select using (true);
+```
+
+---
+
+## 🔐 OAUTH INTEGRATION PER PLATFORM
+
+### How it works
+The user visits /settings/connections and connects each platform one by one.
+Supabase handles the OAuth dance and stores provider_token in the session.
+After OAuth, a Supabase Edge Function is called to:
+1. Save the token to connected_platforms table (encrypted via Vault)
+2. Do an initial sync of activity data → activity_feed table
+
+### GitHub Integration
+- Supabase built-in GitHub OAuth provider → enable in Supabase dashboard
+- Scopes needed: `read:user`, `repo` (for private), `public_repo`, `read:org`
+- After connect → call GitHub API:
+  - GET /user → profile info
+  - GET /users/{username}/repos → repos list
+  - GET /users/{username}/events → recent activity (push, pr, issues)
+  - GET https://github-contributions-api.jogruber.de/v4/{username} → contribution data
+
+### X (Twitter) Integration
+- Use Twitter OAuth 2.0 with PKCE
+- Required scopes: `tweet.read`, `users.read`, `offline.access`
+- Supabase has built-in Twitter provider → enable in dashboard
+- After connect → call X API v2:
+  - GET /2/users/me → user info
+  - GET /2/users/:id/tweets?max_results=10 → recent tweets (Free tier: 500/month)
+  - Note: Display a "Last synced: X ago" and sync manually (not auto) to save API quota
+
+### LinkedIn Integration  
+- LinkedIn OAuth 2.0 via Supabase custom OIDC provider
+- Required scopes: `openid`, `profile`, `email`, `w_member_social`
+- After connect → call LinkedIn API v2:
+  - GET /v2/me → profile
+  - GET /v2/ugcPosts?q=authors → recent posts (requires Marketing Developer Platform approval)
+  - FALLBACK: If API not approved yet, show "Manual post" option where user can paste LinkedIn post URL and we scrape/store it manually
+
+### Slack Integration
+- Slack OAuth 2.0 (user token, not bot token)
+- Scopes: `users:read`, `channels:history`, `im:history`
+- Not in Supabase built-in → use custom OAuth flow via Supabase Edge Function
+- After connect: show workspace name, recent public messages/activity
+
+---
+
+## ⚙️ SUPABASE EDGE FUNCTIONS
+
+### /sync-github
+```typescript
+// Deno Edge Function
+// Triggered manually or by cron
+// 1. Get user's GitHub token from connected_platforms (via Supabase Vault)
+// 2. Fetch /users/{username}/events from GitHub API
+// 3. Transform events → activity_feed rows
+// 4. Upsert into activity_feed
+// 5. Update last_synced_at
+```
+
+### /sync-twitter
+```typescript
+// Same pattern but for X API v2
+// Rate limit aware: check last_synced_at before calling API
+// If last sync < 1 hour ago, return cached data
+```
+
+### /sync-linkedin
+```typescript
+// LinkedIn posts sync
+// If Marketing Developer Platform approved: fetch via API
+// Else: manual entry fallback
+```
+
+### /refresh-tokens
+```typescript
+// Cron function (every 6 hours)
+// Check token_expires_at for each platform
+// Refresh using refresh_token if expiring soon
+```
+
+---
+
+## 🖥️ VUE 3 FRONTEND STRUCTURE
+
+```
+src/
+├── main.ts
+├── App.vue
+├── router/index.ts
+├── stores/
+│   ├── auth.ts          # Supabase session + user
+│   ├── profile.ts       # Profile data
+│   ├── platforms.ts     # Connected platforms state
+│   ├── activity.ts      # Activity feed (all platforms merged)
+│   └── projects.ts      # Projects CRUD
+├── composables/
+│   ├── useSupabase.ts
+│   ├── useGitHub.ts      # GitHub API calls
+│   ├── useActivity.ts    # Merged activity feed
+│   └── usePlatformSync.ts # Trigger edge function syncs
+├── views/
+│   ├── PublicPortfolio.vue  # / → public facing page
+│   ├── Dashboard.vue        # /dashboard → private overview
+│   ├── ActivityFeed.vue     # /dashboard/activity
+│   ├── Projects.vue         # /dashboard/projects (CRUD)
+│   ├── Connections.vue      # /dashboard/connections → OAuth connect/disconnect
+│   └── Settings.vue         # /dashboard/settings
+└── components/
+    ├── layout/
+    │   ├── Navbar.vue
+    │   └── Sidebar.vue
+    ├── portfolio/
+    │   ├── HeroSection.vue
+    │   ├── CurrentStatusCard.vue    # Shows RESC Company + pulse dot
+    │   ├── ProjectsGrid.vue         # Bento grid
+    │   └── SkillsSection.vue
+    ├── activity/
+    │   ├── ActivityFeedItem.vue     # Single item (commit / tweet / post)
+    │   ├── GitHubHeatmap.vue        # Contribution calendar
+    │   ├── PlatformCard.vue         # Per-platform activity section
+    │   └── SyncButton.vue           # Trigger manual sync + show last_synced_at
+    └── connections/
+        ├── ConnectGitHub.vue
+        ├── ConnectTwitter.vue
+        ├── ConnectLinkedIn.vue
+        └── ConnectSlack.vue
+```
+
+---
+
+## 📄 PAGES SPECIFICATION
+
+### `/` — Public Portfolio (SSR-friendly)
+Sections:
+1. Hero: name, title, animated subtitle, CTAs
+2. Current Status Widget: company card with live pulse, role, company description, tech stack
+3. Featured Projects: bento grid from `projects` table (public)
+4. Skills: grouped chips
+5. Activity Preview: last 5 items from activity_feed (public, no sensitive data)
+6. Connect / Contact section
+
+### `/dashboard` — Private (requires auth)
+- Overview cards: total repos, total tweets, LinkedIn connections, last activity
+- Unified activity timeline from all connected platforms (sorted by date)
+- Quick sync buttons per platform with last_synced_at display
+- Supabase Realtime subscription to activity_feed → auto-updates when edge function runs
+
+### `/dashboard/connections` — Platform Management
+For each platform show:
+- Platform icon + name
+- Connection status: Connected ✅ / Not connected ⭕
+- Connected account username
+- Last synced time
+- Token expiry warning if < 7 days
+- Scopes granted
+- [Connect] or [Disconnect] + [Sync Now] buttons
+- Activity count from this platform (last 30 days)
+
+### `/dashboard/projects` — Projects CRUD
+- Table/grid view of all projects
+- Add / Edit / Delete project modal
+- GitHub repo link → on save, fetch repo data (stars, forks, language, last commit)
+- Toggle featured / reorder via drag
+
+---
+
+## 🎨 DESIGN SYSTEM
+
+**Theme:** Dark-first, developer aesthetic. Reference: Linear.app + Vercel dashboard
+
+**Colors:**
+- `--bg`: #0a0a0a
+- `--surface`: #111111  
+- `--surface-2`: #1a1a1a
+- `--border`: rgba(255,255,255,0.07)
+- `--accent`: #00d68f  (energy green — solar theme)
+- `--accent-dim`: rgba(0,214,143,0.1)
+- `--text`: #ededed
+- `--text-muted`: #777
+- `--github`: #ffffff
+- `--twitter`: #1D9BF0
+- `--linkedin`: #0A66C2
+- `--slack`: #4A154B
+
+**Typography:**
+- Display: 'Geist' from Vercel CDN or Space Grotesk
+- Body: 'Inter' (Google Fonts)
+- Mono: 'JetBrains Mono' for tech labels / tokens / timestamps
+
+**Component Patterns:**
+- Platform connection cards: border + icon + status glow (green = connected, gray = not)
+- Activity items: left border color = platform color, icon + platform badge + content
+- Sync button states: idle / syncing (spinning icon) / success (checkmark) / error (x)
+- Token expiry warning: amber banner in the connections page
+
+---
+
+## 🔧 ENV VARIABLES (.env.local)
+
+```env
+VITE_SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=
+
+# Set these in Supabase Dashboard, NOT in frontend:
+# SUPABASE_GITHUB_CLIENT_ID=
+# SUPABASE_GITHUB_CLIENT_SECRET=
+# SUPABASE_TWITTER_CLIENT_ID=
+# SUPABASE_TWITTER_CLIENT_SECRET=
+# SUPABASE_LINKEDIN_CLIENT_ID=
+# SUPABASE_LINKEDIN_CLIENT_SECRET=
+# SUPABASE_SLACK_CLIENT_ID=
+# SUPABASE_SLACK_CLIENT_SECRET=
+```
+
+---
+
+## 📋 IMPORTANT IMPLEMENTATION NOTES
+
+1. **Token Security:** NEVER store OAuth tokens in Pinia/localStorage. 
+   Store only in `connected_platforms` table server-side. 
+   All API calls that need the token go through Supabase Edge Functions.
+
+2. **LinkedIn API Limitation:** LinkedIn's ugcPosts endpoint for reading your own posts 
+   requires "Marketing Developer Platform" status which needs LinkedIn approval.
+   Build a graceful fallback: manual post entry (title, URL, date, platform=linkedin).
+
+3. **X/Twitter Free Tier:** 500 tweet reads/month. 
+   Cache all fetched tweets in activity_feed. 
+   Add a cooldown: only allow manual sync once every 6 hours.
+
+4. **GitHub is the most open:** Use it as the primary activity source. 
+   The contributions API (https://github-contributions-api.jogruber.de/v4/{username}) 
+   is public and doesn't require auth — use it for the heatmap widget.
+
+5. **Supabase Realtime:** Subscribe to `activity_feed` changes in the dashboard 
+   so when an edge function completes a sync, the UI updates live without refresh.
+
+6. **Public vs Private data:** 
+   - Public portfolio shows: project names, skills, current employer, last 5 activity items (no token data)
+   - Private dashboard shows: full activity, connection status, token health, sync controls
+
+7. **Progressive OAuth:** Don't force connecting all platforms. 
+   Each platform is optional. Show a "Not connected" state gracefully on the portfolio.
+```
+
+***
+
+## 🗺️ ترتيب التنفيذ الصح
+
+1. **أول خطوة** — إنشاء Supabase project + تشغيل الـ SQL schema
+2. **تاني** — تفعيل GitHub OAuth في Supabase Dashboard (الأسهل والأكثر فائدة) [maciejpedzich.hashnode](https://maciejpedzich.hashnode.dev/vue-supabase-github-oauth)
+3. **تالت** — بناء الـ Vue frontend مع الـ public portfolio page
+4. **رابع** — ربط GitHub API لجلب repos + activity
+5. **خامس** — إضافة X و LinkedIn بالـ limitations اللي اتذكرت في البرومبت [docs.x](https://docs.x.com/x-api/account-activity/introduction)
+6. **أخيراً** — Supabase Edge Functions للـ token-safe API calls
